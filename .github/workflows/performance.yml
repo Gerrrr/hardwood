@@ -12,22 +12,22 @@
 # blocker on every PR. Maintainers investigating a suspect PR can dispatch
 # this workflow against any branch from the Actions tab.
 name: Performance Tests
+run-name: Class isolation ${{ inputs.experiment }}
 
 on:
   push:
     branches: [ main ]
   workflow_dispatch:
     inputs:
-      perf_runs:
-        description: 'Number of timed runs per contender'
-        required: false
-        default: '5'
-        type: string
-      tests:
-        description: 'Surefire -Dtest filter; pass "*" to run every perf test'
-        required: false
-        default: 'FlatPerformanceTest,NestedPerformanceTest'
-        type: string
+      experiment:
+        description: 'Diagnostic smoke or preregistered comparison'
+        type: choice
+        options: [smoke-before, smoke-after, study]
+        default: smoke-before
+      debug:
+        description: 'Maven debug for smoke checks only'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -47,6 +47,12 @@ env:
 
 jobs:
   performance-tests:
+    name: ${{ matrix.sample.ordinal }} ${{ matrix.sample.arm }} pair ${{ matrix.sample.pair }}
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        sample: ${{ fromJSON(inputs.experiment == 'study' && '[{"arm":"before","pair":"1","ordinal":"1"},{"arm":"after","pair":"1","ordinal":"2"},{"arm":"after","pair":"2","ordinal":"3"},{"arm":"before","pair":"2","ordinal":"4"},{"arm":"before","pair":"3","ordinal":"5"},{"arm":"after","pair":"3","ordinal":"6"},{"arm":"after","pair":"4","ordinal":"7"},{"arm":"before","pair":"4","ordinal":"8"},{"arm":"before","pair":"5","ordinal":"9"},{"arm":"after","pair":"5","ordinal":"10"},{"arm":"after","pair":"6","ordinal":"11"},{"arm":"before","pair":"6","ordinal":"12"},{"arm":"before","pair":"7","ordinal":"13"},{"arm":"after","pair":"7","ordinal":"14"},{"arm":"after","pair":"8","ordinal":"15"},{"arm":"before","pair":"8","ordinal":"16"},{"arm":"before","pair":"9","ordinal":"17"},{"arm":"after","pair":"9","ordinal":"18"},{"arm":"after","pair":"10","ordinal":"19"},{"arm":"before","pair":"10","ordinal":"20"}]' || inputs.experiment == 'smoke-after' && '[{"arm":"after","pair":"smoke","ordinal":"0"}]' || '[{"arm":"before","pair":"smoke","ordinal":"0"}]') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
 
@@ -90,14 +96,23 @@ jobs:
         run: ./mvnw -B -DskipTests install -pl :hardwood-error-prone-checks,:hardwood-core,:hardwood-avro,:hardwood-s3,:hardwood-aws-auth -am
 
       - name: 'Run performance tests (with SIMD)'
-        # Defaults match push-to-main: Flat + Nested over the full cached
-        # taxi-data window. workflow_dispatch can override `perf_runs` and
-        # the `-Dtest` filter (use "*" to run everything in the perf module).
         env:
           MAVEN_OPTS: '--add-modules jdk.incubator.vector'
-          PERF_RUNS: ${{ inputs.perf_runs || '5' }}
-          TESTS: ${{ inputs.tests || 'FlatPerformanceTest,NestedPerformanceTest' }}
-        run: ./mvnw -B verify -Pperformance-test -pl :hardwood-performance-testing -amd -Dperf.start="$PERF_START" -Dperf.end="$PERF_END" -Dperf.runs="$PERF_RUNS" -Dtest="$TESTS" -Dsurefire.failIfNoSpecifiedTests=false
+          EXPERIMENT_ARM: ${{ matrix.sample.arm }}
+          EXPERIMENT_PAIR: ${{ matrix.sample.pair }}
+          EXPERIMENT_ORDINAL: ${{ matrix.sample.ordinal }}
+          EXPERIMENT_DEBUG: ${{ inputs.debug }}
+        run: python3 tools/benchmark-class-isolation-evidence.py
+
+      - name: 'Retain diagnostic evidence'
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: class-isolation-${{ matrix.sample.ordinal }}-${{ matrix.sample.arm }}
+          retention-days: 30
+          path: |
+            benchmark-evidence/
+            performance-testing/end-to-end/target/surefire-reports/
 
       # Persist the taxi data only on success, and only when we actually had to
       # download it (a restore hit needs no re-save). This prevents a partial
