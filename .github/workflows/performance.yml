@@ -26,7 +26,7 @@ on:
       tests:
         description: 'Surefire -Dtest filter; pass "*" to run every perf test'
         required: false
-        default: 'FlatPerformanceTest,NestedPerformanceTest'
+        default: 'FlatPerformanceTest#comparePerformance,NestedPerformanceTest#comparePerformance'
         type: string
 
 permissions:
@@ -89,17 +89,18 @@ jobs:
       - name: 'Install core, s3 and aws-auth into local repo'
         run: ./mvnw -B -DskipTests install -pl :hardwood-error-prone-checks,:hardwood-core,:hardwood-avro,:hardwood-s3,:hardwood-aws-auth -am
 
-      - name: 'Run performance tests (with SIMD)'
-        # Defaults match push-to-main: Flat + Nested over the full cached
-        # taxi-data window. workflow_dispatch can override `perf_runs` and
-        # the `-Dtest` filter (use "*" to run everything in the perf module).
-        # Run benchmark classes sequentially, each in a fresh JVM. Otherwise
-        # their reader pools compete for the same CPUs and bias the timings.
+      - name: 'Prepare end-to-end benchmarks (with SIMD)'
+        run: bash performance-testing/run-end-to-end.sh prepare
+
+      - name: 'Measure end-to-end benchmarks (with SIMD)'
+        # Protocol e2e-build-separated-v2: compilation, fixtures and dependency
+        # resolution finish above; microbenchmark packaging is omitted. Default
+        # methods run sequentially in fresh JVMs, with reader parallelism intact.
         env:
           MAVEN_OPTS: '--add-modules jdk.incubator.vector'
           PERF_RUNS: ${{ inputs.perf_runs || '5' }}
-          TESTS: ${{ inputs.tests || 'FlatPerformanceTest,NestedPerformanceTest' }}
-        run: ./mvnw -B verify -Pperformance-test -pl :hardwood-performance-testing -amd -Dperf.start="$PERF_START" -Dperf.end="$PERF_END" -Dperf.runs="$PERF_RUNS" -Dtest="$TESTS" -Dsurefire.failIfNoSpecifiedTests=false -DforkCount=1 -DreuseForks=false
+          TESTS: ${{ inputs.tests || 'FlatPerformanceTest#comparePerformance,NestedPerformanceTest#comparePerformance' }}
+        run: bash performance-testing/run-end-to-end.sh measure
 
       # Persist the taxi data only on success, and only when we actually had to
       # download it (a restore hit needs no re-save). This prevents a partial

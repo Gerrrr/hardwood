@@ -253,9 +253,11 @@ class FlatPerformanceTest {
     }
 
     private Result timeRun(String name, Supplier<Result> runner) {
+        System.out.println("BENCHMARK_REPETITION Flat " + name + " START");
         long start = System.currentTimeMillis();
         Result result = runner.get();
         long duration = System.currentTimeMillis() - start;
+        System.out.println("BENCHMARK_REPETITION Flat " + name + " END");
         System.out.println(String.format("  %s: %.2f s", name, duration / 1000.0));
         return new Result(result.passengerCount(), result.tripDistance(),
                 result.fareAmount(), duration, result.rowCount());

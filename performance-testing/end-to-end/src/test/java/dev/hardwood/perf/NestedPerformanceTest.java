@@ -840,10 +840,12 @@ class NestedPerformanceTest {
     // ==================== Timing and Reporting ====================
 
     private Result timeRun(String name, Supplier<Result> runner) {
+        System.out.println("BENCHMARK_REPETITION Nested " + name + " START");
         System.out.println("  Running " + name + "...");
         long start = System.currentTimeMillis();
         Result result = runner.get();
         long duration = System.currentTimeMillis() - start;
+        System.out.println("BENCHMARK_REPETITION Nested " + name + " END");
         return new Result(result.rowCount(), duration,
                 result.minVersion(), result.maxVersion(),
                 result.minConfidence(), result.maxConfidence(),
