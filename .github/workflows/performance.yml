@@ -11,23 +11,20 @@
 # noisy to reliably catch regressions, and the ~3 min stage was the longest
 # blocker on every PR. Maintainers investigating a suspect PR can dispatch
 # this workflow against any branch from the Actions tab.
-name: Performance Tests
+name: Benchmark Build Separation Evidence
 
 on:
-  push:
-    branches: [ main ]
   workflow_dispatch:
     inputs:
-      perf_runs:
-        description: 'Number of timed runs per contender'
-        required: false
-        default: '5'
-        type: string
-      tests:
-        description: 'Surefire -Dtest filter; pass "*" to run every perf test'
-        required: false
-        default: 'FlatPerformanceTest#comparePerformance,NestedPerformanceTest#comparePerformance'
-        type: string
+      experiment:
+        description: 'Diagnostic smoke or preregistered four-job AB/BA comparison'
+        type: choice
+        options: [smoke, study]
+        default: smoke
+      debug:
+        description: 'Maven debug for smoke only'
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -47,6 +44,12 @@ env:
 
 jobs:
   performance-tests:
+    name: ${{ matrix.sample.ordinal }} ${{ matrix.sample.arm }} pair ${{ matrix.sample.pair }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        sample: ${{ fromJSON(inputs.experiment == 'study' && '[{"arm":"before","pair":"1","ordinal":"1"},{"arm":"after","pair":"1","ordinal":"2"},{"arm":"after","pair":"2","ordinal":"3"},{"arm":"before","pair":"2","ordinal":"4"}]' || '[{"arm":"after","pair":"smoke","ordinal":"0"}]') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
 
@@ -89,18 +92,24 @@ jobs:
       - name: 'Install core, s3 and aws-auth into local repo'
         run: ./mvnw -B -DskipTests install -pl :hardwood-error-prone-checks,:hardwood-core,:hardwood-avro,:hardwood-s3,:hardwood-aws-auth -am
 
-      - name: 'Prepare end-to-end benchmarks (with SIMD)'
-        run: bash performance-testing/run-end-to-end.sh prepare
-
-      - name: 'Measure end-to-end benchmarks (with SIMD)'
-        # Protocol e2e-build-separated-v2: compilation, fixtures and dependency
-        # resolution finish above; microbenchmark packaging is omitted. Default
-        # methods run sequentially in fresh JVMs, with reader parallelism intact.
+      - name: 'Run benchmark evidence collection'
         env:
           MAVEN_OPTS: '--add-modules jdk.incubator.vector'
-          PERF_RUNS: ${{ inputs.perf_runs || '5' }}
-          TESTS: ${{ inputs.tests || 'FlatPerformanceTest#comparePerformance,NestedPerformanceTest#comparePerformance' }}
-        run: bash performance-testing/run-end-to-end.sh measure
+          EXPERIMENT_ARM: ${{ matrix.sample.arm }}
+          EXPERIMENT_PAIR: ${{ matrix.sample.pair }}
+          EXPERIMENT_ORDINAL: ${{ matrix.sample.ordinal }}
+          EXPERIMENT_DEBUG: ${{ inputs.experiment == 'smoke' && inputs.debug }}
+        run: python3 tools/benchmark-build-separation-evidence.py
+
+      - name: 'Retain evidence even on failure'
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: build-separation-${{ matrix.sample.ordinal }}-${{ matrix.sample.arm }}
+          retention-days: 30
+          path: |
+            benchmark-evidence/
+            performance-testing/end-to-end/target/surefire-reports/
 
       # Persist the taxi data only on success, and only when we actually had to
       # download it (a restore hit needs no re-save). This prevents a partial
