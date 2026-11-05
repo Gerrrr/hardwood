@@ -34,8 +34,13 @@ case "${1:-}" in
     echo "BENCHMARK_PROTOCOL e2e-build-separated-v2 product_revision=$(git rev-parse HEAD)"
     echo 'BENCHMARK_PHASE measurement START reactor_threads=1 forkCount=1 reuseForks=false'
     # No lifecycle phases, reactor expansion, network resolution or fixture work.
-    # Quote the method selectors so # is passed literally to Surefire.
-    IFS=',' read -ra selectors <<< "${TESTS:-FlatPerformanceTest#comparePerformance,NestedPerformanceTest#comparePerformance}"
+    # Keep arbitrary Surefire filters intact: commas can combine inclusions,
+    # exclusions and regular expressions. Split only the two default methods.
+    defaults='FlatPerformanceTest#comparePerformance,NestedPerformanceTest#comparePerformance'
+    selectors=("${TESTS:-$defaults}")
+    if [[ "${selectors[0]}" == "$defaults" ]]; then
+      selectors=('FlatPerformanceTest#comparePerformance' 'NestedPerformanceTest#comparePerformance')
+    fi
     for selector in "${selectors[@]}"; do
       echo "BENCHMARK_METHOD $selector START"
       ./mvnw "${common[@]}" -o -pl "$module" surefire:test "-Dtest=$selector"
